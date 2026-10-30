@@ -1,0 +1,7 @@
+# E4 ablation: (b) signed gain max(G_k, 0) instead of the magnitude
+defaults: [../_pairs/qwen25-1.5b.yaml, ../_methods/cw-opd.yaml]
+name: e4b-signed
+stages:
+  train:
+    args:
+      sign: pos

@@ -1,0 +1,7 @@
+# E4 ablation: (c) the student, not the teacher, scores the probes
+defaults: [../_pairs/qwen25-1.5b.yaml, ../_methods/cw-opd.yaml]
+name: e4c-student-scorer
+stages:
+  train:
+    args:
+      scorer: student

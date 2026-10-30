@@ -1,0 +1,8 @@
+# Entropy-selective OPD (SE-KD-style, Tavor et al. 2026): reverse KL only on the top fraction of
+# tokens by student entropy. Our approximation, not the authors' code; fraction is to be tuned.
+defaults: [_train.yaml]
+stages:
+  train:
+    args:
+      selection: entropy
+      selection-fraction: 0.1

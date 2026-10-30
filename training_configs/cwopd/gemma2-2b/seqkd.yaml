@@ -1,0 +1,2 @@
+defaults: [../_pairs/gemma2-2b.yaml, ../_methods/seqkd.yaml]
+name: seqkd

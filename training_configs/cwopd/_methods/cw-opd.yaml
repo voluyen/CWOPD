@@ -1,0 +1,7 @@
+# Consequence-weighted OPD (proposal Eqs. 2-5): teacher-scored packed probes, |V_k - V_{k-1}|,
+# w = 1 + g / running mean, reverse KL.
+defaults: [_train.yaml]
+stages:
+  train:
+    args:
+      signal: consequence

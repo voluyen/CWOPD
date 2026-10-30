@@ -1,4 +1,4 @@
-"""Command-line runners for the `answergain`, `palign` and `ssft` experiment families.
+"""Command-line runners for the `answergain`, `palign`, `ssft` and `cwopd` experiment families.
 Stages run as subprocesses; arguments are validated against each module's parser."""
 import argparse
 import contextlib
@@ -18,7 +18,7 @@ from answergain.config import ConfigError, load_config
 
 SRC_DIR = Path(__file__).resolve().parents[1]
 REPO_DIR = SRC_DIR.parent
-FAMILIES = ("answergain", "palign", "ssft")
+FAMILIES = ("answergain", "palign", "ssft", "cwopd")
 
 
 class StageError(RuntimeError):
@@ -281,9 +281,15 @@ def run_pipeline(config: dict, stages: list[str], cwd: Path, force: bool, dry_ru
     return 0
 
 
+# Families with their own top-level config tree (not a baseline of the answergain method).
+OWN_ROOTS = ("cwopd",)
+
+
 def family_root(family: str) -> Path:
     root = REPO_DIR / "training_configs"
-    return root if family == "answergain" else root / "baselines" / family
+    if family == "answergain":
+        return root
+    return root / family if family in OWN_ROOTS else root / "baselines" / family
 
 
 def resolve_config(name: str, family: str) -> Path:
@@ -303,7 +309,9 @@ def family_configs(family: str) -> list[Path]:
     paths = []
     for path in sorted(root.rglob("*.yaml")):
         relative = path.relative_to(root)
-        if any(part.startswith("_") for part in relative.parts) or relative.parts[0] == "baselines":
+        if any(part.startswith("_") for part in relative.parts):
+            continue
+        if family == "answergain" and relative.parts[0] in ("baselines", *OWN_ROOTS):
             continue
         paths.append(path)
     return paths
@@ -398,6 +406,10 @@ def palign_main() -> int:
 
 def ssft_main() -> int:
     return main(family="ssft")
+
+
+def cwopd_main() -> int:
+    return main(family="cwopd")
 
 
 if __name__ == "__main__":

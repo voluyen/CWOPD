@@ -1,0 +1,7 @@
+# Supervised KD (Hinton et al.): token-level forward KL on the teacher's responses (off-policy).
+defaults: [_train.yaml]
+stages:
+  train:
+    args:
+      rollout-source: teacher
+      objective: fkl

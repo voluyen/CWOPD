@@ -1,0 +1,8 @@
+# Entropy x divergence-selective OPD (TIP-style, Xu et al. 2026). Our approximation, not the
+# authors' code; fraction is to be tuned.
+defaults: [_train.yaml]
+stages:
+  train:
+    args:
+      selection: entropy-divergence
+      selection-fraction: 0.1

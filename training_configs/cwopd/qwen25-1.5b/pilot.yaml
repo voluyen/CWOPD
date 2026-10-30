@@ -1,0 +1,4 @@
+# E1 distinctness (RQ1) and E2 probe validity (RQ2), before any training. Decision point on H1.
+defaults: [../_pairs/qwen25-1.5b.yaml]
+name: pilot
+pipeline: [data, targets, rollouts, pilot, mc, analyze]

@@ -1,0 +1,17 @@
+# Main pair of RIVAD Table 2 / TSD-KD Table 1.
+defaults: [../_common.yaml]
+pair:
+  key: qwen25-1.5b
+  student: ${env:QWEN25_1P5B,Qwen/Qwen2.5-1.5B-Instruct}
+  teacher: ${env:QWEN25_14B,Qwen/Qwen2.5-14B-Instruct}
+data:
+  prompts: Minsang/TSD-KD-Qwen2.5-1.5B-Instruct-Gen  # 79,751 UltraInteract prompts (instruction only)
+  teacher: Minsang/TSD-KD-Qwen2.5-14B-Instruct-Gen   # released teacher responses -> a_T, off-policy data
+learning_rate: 5.0e-6  # TSD-KD Table 10 (Qwen2.5)
+attn_implementation: sdpa
+eval_benchmarks: gsm8k,gsm_plus,math,mbpp,sciq,mmlu_stem,mmlu_pro_math,bbh_cot,ifeval
+table_benchmarks: gsm8k,gsm_plus,math,mbpp,sciq,mmlu_stem,mmlu_pro_math,bbh_cot
+stages:
+  targets:
+    # teacher responses already come with the data stage; `creates` exists, so this is skipped
+    creates: ${data_dir}/train.jsonl

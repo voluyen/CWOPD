@@ -1,0 +1,7 @@
+# E4 ablation: (e) w proportional to g (no floor of 1)
+defaults: [../_pairs/qwen25-1.5b.yaml, ../_methods/cw-opd.yaml]
+name: e4e-no-floor
+stages:
+  train:
+    args:
+      floor: false

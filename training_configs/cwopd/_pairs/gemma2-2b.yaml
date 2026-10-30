@@ -1,0 +1,13 @@
+# Cross-family pair of RIVAD Table 6 / TSD-KD Table 2.
+defaults: [../_common.yaml]
+pair:
+  key: gemma2-2b
+  student: ${env:GEMMA2_2B,google/gemma-2-2b-it}
+  teacher: ${env:GEMMA2_9B,google/gemma-2-9b-it}
+data:
+  prompts: Minsang/TSD-KD-Qwen2.5-1.5B-Instruct-Gen  # same prompts; only `instruction` is used
+  teacher: null  # no released Gemma2-9B responses: the targets stage generates them with vLLM
+learning_rate: 1.0e-7  # TSD-KD Table 10 (Gemma2)
+attn_implementation: eager  # Gemma2's attention softcapping needs the eager path
+eval_benchmarks: gsm8k,gsm_plus,math,mbpp,mmlu_stem,ifeval
+table_benchmarks: gsm8k,gsm_plus,math,mbpp,mmlu_stem  # the columns RIVAD Table 6 reports

@@ -28,6 +28,7 @@ dependencies = [
 answergain = "answergain.cli:answergain_main"
 palign = "answergain.cli:palign_main"
 ssft = "answergain.cli:ssft_main"
+cwopd = "answergain.cli:cwopd_main"
 
 [build-system]
 requires = ["hatchling"]

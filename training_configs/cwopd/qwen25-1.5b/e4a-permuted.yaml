@@ -1,0 +1,7 @@
+# E4 ablation: (a) g permuted within the batch: same weight distribution, wrong positions
+defaults: [../_pairs/qwen25-1.5b.yaml, ../_methods/cw-opd.yaml]
+name: e4a-permuted
+stages:
+  train:
+    args:
+      signal: permuted

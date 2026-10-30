@@ -5,7 +5,7 @@ Guidance for Claude Code (claude.ai/code) when working in this repository.
 ## What this is
 
 Research code for distilling long chain-of-thought into small students, packaged as the `answergain`
-framework (`src/answergain/`). Three method families share one pipeline and one config system, and each
+framework (`src/answergain/`). Four method families share one pipeline and one config system, and each
 has its own command and its own run names:
 
 | Command  | Family | Configs | Run name |
@@ -13,6 +13,7 @@ has its own command and its own run names:
 | `answergain`    | spectral-guided learning, answer-gain allocation and Appendix F DFT comparisons | `training_configs/` | `<arm>-<track>` |
 | `palign` | P-ALIGN (adaptive prefix alignment) | `training_configs/baselines/palign/` | `palign-<model>` |
 | `ssft`   | Segment-Selective SFT (IG attribution) | `training_configs/baselines/ssft/` | `ssft-<model>` |
+| `cwopd`  | consequence-weighted on-policy distillation (proposal.pdf), RIVAD/TSD-KD setup | `training_configs/cwopd/` | `<arm>-<pair>` |
 
 Keep the families separate: never fold a P-ALIGN or SSFT run into an `answergain` config or name, and
 keep their data dirs apart (P-ALIGN tokenizes differently from the SGL arms, see below).
@@ -43,13 +44,14 @@ matplotlib math-verify==0.8.0 sympy pytest ruff` and `pip install --no-deps -e .
 
 ```
 src/answergain/
-  cli.py, config.py   stage runner (three entry points) and YAML config system
+  cli.py, config.py   stage runner (four entry points) and YAML config system
   data/               prepare (tokenize + segment -> train-segmented.jsonl), s1k (trace rows)
   segment/            sentence | paragraph | cue rules, char -> token spans
   signals/            spectral capture (strength + entropy), answer gain
   selection/          spectral gate -> loss_mask          allocation/  answer-gain weights -> loss_weights
   data/dft_sources.py Appendix F token_source labels
   palign/             truncate -> align -> build          ssft/        attribution -> select -> build
+  cwopd/              packed answer probes, consequence weights, on-policy trainer, pilots, lm-eval suite
   training/           masked / weighted objectives, HF trainer, Unsloth backend
   eval/               benchmarks, vLLM generation, graders, comparison table
 training_configs/_common/       base, models, data blocks, training recipes, eval protocol
@@ -61,6 +63,7 @@ baselines/            P-ALIGN, SSFT and SGL module entry points
 references/           upstream P-ALIGN and SegmentSelectiveSFT code — read-only
 tests/regression/     golden hashes, CLI end-to-end, offline assets
 scripts/<model>/run.sh paper experiments via YAML; scripts/setup.sh installs dependencies
+scripts/cwopd/       CW-OPD phases (setup, smoke, phase0-3); README there lists setup and deviations
 results*/, logs/      live output dirs written by runs; experiments/ holds old root logs
 ```
 

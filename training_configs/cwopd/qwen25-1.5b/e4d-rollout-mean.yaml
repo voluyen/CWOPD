@@ -1,0 +1,7 @@
+# E4 ablation: (d) per-rollout mean instead of the running mean
+defaults: [../_pairs/qwen25-1.5b.yaml, ../_methods/cw-opd.yaml]
+name: e4d-rollout-mean
+stages:
+  train:
+    args:
+      normalization: rollout

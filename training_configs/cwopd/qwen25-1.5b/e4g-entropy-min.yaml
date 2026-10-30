@@ -1,0 +1,8 @@
+# E4 ablation: (g) plus TSD-KD-style entropy minimization on the top-10% entropy tokens (coefficient to tune)
+defaults: [../_pairs/qwen25-1.5b.yaml, ../_methods/cw-opd.yaml]
+name: e4g-entropy-min
+stages:
+  train:
+    args:
+      entropy-min-coef: 0.1
+      entropy-min-fraction: 0.1

@@ -120,6 +120,11 @@ ruff check src tests
 
 signal, segmenter or experiment.
 
+## CW-OPD (on-policy follow-up)
+
+`cwopd` runs consequence-weighted on-policy distillation (`proposal.pdf`) under the RIVAD / TSD-KD
+setup; see [scripts/cwopd/README.md](scripts/cwopd/README.md).
+
 ## Citation
 
 The paper is under anonymous review; a BibTeX entry will be added after the review.

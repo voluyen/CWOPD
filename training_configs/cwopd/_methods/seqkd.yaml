@@ -1,0 +1,8 @@
+# Sequence-level KD (Kim & Rush): SFT on the teacher's responses; no teacher pass needed.
+defaults: [_train.yaml]
+stages:
+  train:
+    args:
+      rollout-source: teacher
+      objective: ce
+      teacher: null

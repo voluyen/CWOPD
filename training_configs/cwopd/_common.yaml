@@ -1,0 +1,159 @@
+# CW-OPD (proposal.pdf) under the RIVAD / TSD-KD experimental setup. RIVAD Table 2 reuses TSD-KD's
+# numbers, so schedule and data follow TSD-KD's released training script (github.com/kmswin1/TSD-KD)
+# and RIVAD Table 5 / Appendix B.2 where TSD-KD is silent.
+#
+# Hardware: one 60 GB GPU. The global batch stays 128 prompts per update (processed one rollout at a
+# time), but the student is kept in bf16 weights as TSD-KD's script does (bf16 load + bf16=True):
+# Qwen2.5-14B teacher ~30 GB + 1.5B student, grads and AdamW states ~12 GB. fp32 master weights
+# (student-dtype: float32, ~24 GB) do not fit next to the teacher.
+family: cwopd
+run:
+  gpus: [0]  # one GPU; RIVAD used 4 (B.2), the global batch of 128 prompts is unchanged
+  log_dir: logs
+seed: 10  # RIVAD Table 5
+seed_suffix: ""  # set to e.g. -s11 together with seed=11 for extra seeds
+data_dir: data/cwopd/${pair.key}
+run_name: ${name}-${pair.key}${seed_suffix}
+checkpoint: checkpoints/cwopd/${run_name}
+results_dir: results/cwopd/${pair.key}
+pilot_dir: ${results_dir}/pilot
+eval_python: ${env:LMEVAL_PYTHON,.venv-eval/bin/python}
+eval_dp: 1  # vLLM data-parallel replicas = GPUs used by the eval stage
+stages:
+  data:
+    module: answergain.cwopd.data
+    creates: ${data_dir}/train.jsonl
+    args:
+      prompt-dataset: ${data.prompts}
+      teacher-dataset: ${data.teacher}
+      tokenizer: ${pair.student}
+      output-dir: ${data_dir}
+      heldout-fraction: 0.01  # TSD-KD: train_test_split(test_size=0.01) -> ~78K training prompts
+      max-prompt-tokens: 512
+      max-answer-tokens: 32
+      seed: ${seed}
+  targets:
+    module: answergain.cwopd.targets
+    creates: ${data_dir}/targets.json
+    args:
+      data-dir: ${data_dir}
+      teacher: ${pair.teacher}
+      max-tokens: 512
+      temperature: 0.0
+      summary: ${data_dir}/targets.json
+      seed: ${seed}
+  train:
+    module: answergain.cwopd.train
+    launcher: torchrun
+    creates: ${checkpoint}/run-summary.json
+    args:
+      student: ${pair.student}
+      teacher: ${pair.teacher}
+      data-path: ${data_dir}/train.jsonl
+      output-dir: ${checkpoint}
+      epochs: 3
+      prompts-per-step: 128
+      learning-rate: ${learning_rate}
+      warmup-ratio: 0.1
+      weight-decay: 0.01
+      max-grad-norm: 1.0
+      seed: ${seed}
+      rollout-source: student
+      max-new-tokens: 512
+      rollout-temperature: 1.0
+      generation-batch-size: 32
+      kd-temperature: 1.0
+      teacher-max-tokens: 2560
+      attn-implementation: ${attn_implementation}
+      student-dtype: bfloat16
+      objective: rkl
+      jsd-beta: 0.9
+      signal: uniform
+      sign: abs
+      scorer: teacher
+      normalization: running
+      floor: true
+      value: geomean
+      segmenter: sentence
+      probe-mode: packed
+      selection: none
+      selection-fraction: 0.1
+      entropy-min-coef: 0.0
+      entropy-min-fraction: 0.1
+      teacher-cache: cpu  # recompute if host RAM < ~48 GB (Gemma2: ~0.26 GB/rollout)
+      dump-rollouts-every: 50
+  eval:
+    module: answergain.cwopd.lm_eval_suite
+    gpus: ${run.gpus}
+    creates: ${results_dir}/${run_name}/summary.json
+    args:
+      model: ${checkpoint}
+      tag: ${run_name}
+      results-dir: ${results_dir}
+      benchmarks: ${eval_benchmarks}
+      lm-eval-python: ${eval_python}
+      data-parallel-size: ${eval_dp}
+      apply-chat-template: false
+      seed: ${seed}
+  table:
+    module: answergain.cwopd.table
+    args:
+      results-dir: ${results_dir}
+      pair: ${pair.key}
+      benchmarks: ${table_benchmarks}
+  e6:
+    module: answergain.cwopd.analyze_training
+    creates: ${results_dir}/${run_name}/e6.json
+    args:
+      run-dir: ${checkpoint}
+      output: ${results_dir}/${run_name}/e6.json
+  rollouts:
+    module: answergain.cwopd.rollouts
+    creates: ${pilot_dir}/rollouts.jsonl
+    args:
+      data-path: ${data_dir}/heldout.jsonl
+      model: ${pair.student}
+      output: ${pilot_dir}/rollouts.jsonl
+      n-prompts: 300
+      max-tokens: 512
+      temperature: 1.0
+      seed: ${seed}
+  pilot:
+    module: answergain.cwopd.pilot
+    creates: ${pilot_dir}/pilot.jsonl
+    args:
+      rollouts: ${pilot_dir}/rollouts.jsonl
+      teacher: ${pair.teacher}
+      student: ${pair.student}
+      output: ${pilot_dir}/pilot.jsonl
+      teacher-max-tokens: 2560
+      attn-implementation: ${attn_implementation}
+  mc:
+    module: answergain.cwopd.mc_value
+    creates: ${pilot_dir}/mc.jsonl
+    args:
+      pilot: ${pilot_dir}/pilot.jsonl
+      rollouts: ${pilot_dir}/rollouts.jsonl
+      teacher: ${pair.teacher}
+      output: ${pilot_dir}/mc.jsonl
+      n-rollouts: 50
+      samples: 8
+      max-tokens: 512
+      seed: ${seed}
+  analyze:
+    module: answergain.cwopd.analyze_pilot
+    creates: ${pilot_dir}/report.json
+    args:
+      pilot: ${pilot_dir}/pilot.jsonl
+      mc: ${pilot_dir}/mc.jsonl
+      output: ${pilot_dir}/report.json
+  cost:
+    module: answergain.cwopd.cost
+    creates: ${pilot_dir}/cost.json
+    args:
+      rollouts: ${pilot_dir}/rollouts.jsonl
+      teacher: ${pair.teacher}
+      output: ${pilot_dir}/cost.json
+      n-rollouts: 64
+      k-values: 4,16,64,128
+      attn-implementation: ${attn_implementation}

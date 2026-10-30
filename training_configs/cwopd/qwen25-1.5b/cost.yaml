@@ -1,0 +1,4 @@
+# E5 cost (RQ3): teacher time and memory with / without packed probes, against K.
+defaults: [../_pairs/qwen25-1.5b.yaml]
+name: cost
+pipeline: [data, targets, rollouts, cost]

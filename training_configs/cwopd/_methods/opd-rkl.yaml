@@ -1,0 +1,2 @@
+# Uniform on-policy distillation with reverse KL (Eq. 1): the direct ablation of CW-OPD.
+defaults: [_train.yaml]

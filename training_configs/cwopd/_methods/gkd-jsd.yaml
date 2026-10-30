@@ -1,0 +1,7 @@
+# GKD, on-policy (lambda = 1), generalized JSD with beta = 0.9, as TSD-KD / RIVAD run it.
+defaults: [_train.yaml]
+stages:
+  train:
+    args:
+      objective: jsd
+      jsd-beta: 0.9

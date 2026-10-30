@@ -1,0 +1,8 @@
+# Consequence weighting on top of GKD's JSD(0.9), against gkd-jsd (Sec. 5.3(5): bound holds up to constants).
+defaults: [../_pairs/qwen25-1.5b.yaml, ../_methods/cw-opd.yaml]
+name: cw-gkd-jsd
+stages:
+  train:
+    args:
+      objective: jsd
+      jsd-beta: 0.9

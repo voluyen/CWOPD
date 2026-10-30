@@ -1,0 +1,7 @@
+# E4 ablation: (f) raw answer probability instead of the per-token geometric mean
+defaults: [../_pairs/qwen25-1.5b.yaml, ../_methods/cw-opd.yaml]
+name: e4f-raw-value
+stages:
+  train:
+    args:
+      value: raw

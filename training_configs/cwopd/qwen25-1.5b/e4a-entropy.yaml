@@ -1,0 +1,7 @@
+# E4 ablation: (a) step-mean student entropy in the same weight form
+defaults: [../_pairs/qwen25-1.5b.yaml, ../_methods/cw-opd.yaml]
+name: e4a-entropy
+stages:
+  train:
+    args:
+      signal: entropy

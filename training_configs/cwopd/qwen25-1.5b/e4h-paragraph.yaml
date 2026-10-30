@@ -1,0 +1,7 @@
+# E4 ablation: segmentation rule: paragraphs instead of sentences
+defaults: [../_pairs/qwen25-1.5b.yaml, ../_methods/cw-opd.yaml]
+name: e4h-paragraph
+stages:
+  train:
+    args:
+      segmenter: paragraph

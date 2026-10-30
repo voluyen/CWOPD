@@ -1,0 +1,7 @@
+# E4 ablation: (d) ALERD's within-rollout standardize-clip-exp allocation (c=2, tau=1, lambda=0.5)
+defaults: [../_pairs/qwen25-1.5b.yaml, ../_methods/cw-opd.yaml]
+name: e4d-alerd
+stages:
+  train:
+    args:
+      normalization: alerd

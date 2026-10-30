@@ -1,0 +1,2 @@
+defaults: [../_pairs/qwen25-1.5b.yaml, ../_methods/seqkd.yaml]
+name: seqkd

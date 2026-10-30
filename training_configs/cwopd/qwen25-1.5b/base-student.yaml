@@ -1,0 +1,5 @@
+# Untrained student through the eval suite: calibrates the lm-eval protocol against the published rows.
+defaults: [../_pairs/qwen25-1.5b.yaml]
+name: base-student
+checkpoint: ${pair.student}
+pipeline: [eval]
