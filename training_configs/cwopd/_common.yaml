@@ -61,7 +61,8 @@ stages:
       seed: ${seed}
       rollout-source: student
       max-new-tokens: 512
-      rollout-temperature: 1.0
+      rollout-temperature: 1.0  # sampled, as TSD-KD (do_sample=True, temperature 1.0, top_k 0, no top_p)
+      rollout-top-p: 1.0
       rollout-engine: vllm  # colocated, synced to the student every step; hf = transformers generate
       vllm-gpu-memory-utilization: 0.2
       vllm-max-model-len: 2048  # prompt <= 512 + 512 new tokens
