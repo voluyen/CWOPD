@@ -220,10 +220,13 @@ def generate_rollouts(model, tokenizer, prompts, args, stops, vocab, device, aut
         for row, prompt in enumerate(chunk):  # left padding
             ids[row, width - len(prompt):] = torch.tensor(prompt)
             mask[row, width - len(prompt):] = 1
+        # every field set explicitly: generate() would otherwise take the checkpoint's generation_config
+        # defaults (Qwen2.5-Instruct ships repetition_penalty > 1), and rollouts must be plain samples of p_S
         sampling = (
             {"do_sample": True, "temperature": args.rollout_temperature, "top_p": args.rollout_top_p, "top_k": 0}
             if args.rollout_temperature > 0 else {"do_sample": False}
         )
+        sampling["repetition_penalty"] = 1.0
         with autocast():
             generated = module.generate(
                 input_ids=ids.to(device), attention_mask=mask.to(device), max_new_tokens=args.max_new_tokens,

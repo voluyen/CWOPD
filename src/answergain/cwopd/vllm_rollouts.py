@@ -46,7 +46,7 @@ class VLLMRollouts:
             "temperature": 0.0}
         params = [
             SamplingParams(max_tokens=self.max_new_tokens, stop_token_ids=self.stops, seed=seed + index,
-                           allowed_token_ids=self.allowed, **sampling)
+                           allowed_token_ids=self.allowed, repetition_penalty=1.0, top_k=-1, **sampling)
             for index in range(len(prompts))
         ]
         outputs = self.llm.generate([TokensPrompt(prompt_token_ids=p) for p in prompts], params, use_tqdm=False)
