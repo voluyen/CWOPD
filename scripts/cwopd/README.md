@@ -19,11 +19,11 @@ Local model copies: `QWEN25_14B`, `QWEN25_1P5B`, `GEMMA2_9B`, `GEMMA2_2B` env va
 
 | Script | What | Proposal |
 |---|---|---|
-| `phase0_calibrate.sh` | evaluate untrained teachers/students, compare with RIVAD Table 2 / 6 rows | protocol check |
+| `phase0_calibrate.sh` | optional: evaluate untrained teachers/students against RIVAD Table 2 / 6 rows | protocol check |
 | `phase0_pilot.sh` | data, a_T, 300 student rollouts, E1 distinctness, E2 Monte Carlo validity | RQ1, RQ2, decision on H1 |
 | `phase1_cost.sh` | teacher time / memory with and without packed probes against K | E5, RQ3 |
-| `phase2_main.sh` | SeqKD, Supervised KD, OPD-RKL, GKD-JSD(0.9), entropy- and TIP-selective OPD, CW-OPD, CW-GKD | E3 |
-| `phase3_ablations.sh` | E4 (a)-(g) + paragraph segmentation, Gemma2 pair, E6 analysis | E4, E6 |
+| `phase2_main.sh` | CW-OPD only; baselines are RIVAD Table 2's published rows | E3 |
+| `phase3_ablations.sh` | E4 (a)-(g) + paragraph segmentation, CW-OPD on Gemma2 (vs RIVAD Table 6), E6 | E4, E6 |
 
 Every script forwards overrides: `scripts/cwopd/phase2_main.sh stages.train.args.teacher-cache=recompute`.
 Extra seeds: `SEEDS="11 12" scripts/cwopd/phase2_main.sh` (runs are suffixed `-s11`, `-s12`).
@@ -53,7 +53,7 @@ Outputs: `data/cwopd/<pair>/`, `checkpoints/cwopd/<run>/` (`metrics.jsonl` per s
   fit next to the 14B teacher in 60 GB.
 - **Wall-clock.** One update means 128 HF-generate rollouts, 128 teacher passes and 128 student passes. Read
   `generate_s + score_s + train_s` from the smoke run and multiply by ~617 steps/epoch x 3 epochs. Expect
-  days per arm, so prioritise: calibration, pilot, then `cw-opd`, `opd-rkl` and `gkd-jsd`. Run the
+  days per arm, so prioritise: pilot, then `cw-opd`. Run the
   ablations with `stages.train.args.epochs=1` if budget forces it, and say so in the paper.
 - **Host RAM.** `teacher-cache: cpu` keeps a batch of teacher logits in RAM, about 20 GB (Qwen) or 34 GB
   (Gemma) per update. With less RAM, pass `stages.train.args.teacher-cache=recompute`, which costs one extra
@@ -61,9 +61,10 @@ Outputs: `data/cwopd/<pair>/`, `checkpoints/cwopd/<run>/` (`metrics.jsonl` per s
 - **Eval protocol.** The metric key per benchmark (e.g. GSM8K flexible vs strict extract) and chat template
   (off by default) are not stated by TSD-KD. Fix them with `phase0_calibrate.sh` so the base rows match
   57.1 / 38.8 / 16.9 / ... before comparing.
-- **Baselines not reimplemented.** MiniLLM, DistiLLM, Speculative KD, TSD-KD, CSD and AMiD come from the
-  published rows in `answergain.cwopd.table`. TSD-KD's code is public (github.com/kmswin1/TSD-KD) if a rerun is
-  needed. The entropy- and TIP-selective arms and the E4g entropy term are approximations: selection fraction
+- **Baselines not retrained.** Every baseline (SeqKD, Supervised-KD, GKD, MiniLLM, DistiLLM, Speculative KD,
+  TSD-KD, CSD, AMiD, RIVAD) comes from the published rows in `answergain.cwopd.table`, so the eval protocol
+  must be RIVAD's. Configs for `opd-rkl`, `gkd-jsd`, `seqkd`, `supervised-kd`, `select-*` remain for single runs.
+  TSD-KD's code is public (github.com/kmswin1/TSD-KD) if a rerun is needed. The entropy- and TIP-selective arms and the E4g entropy term are approximations: selection fraction
   0.1, coefficient 0.1, both to tune.
 - **No a_T.** Prompts whose teacher response has no `\boxed{}` within 32 tokens (code, truncated) keep
   uniform weights, i.e. plain OPD, as the proposal specifies. `target_rate` in `metrics.jsonl` reports the
