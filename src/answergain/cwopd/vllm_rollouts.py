@@ -20,8 +20,10 @@ class VLLMRollouts:
         self.llm = LLM(model=model_path, dtype="bfloat16", gpu_memory_utilization=gpu_memory_utilization,
                        max_model_len=max_model_len, seed=seed, enable_prefix_caching=False)
         self.stops = stops
-        # padded embedding rows (Qwen2.5 pads its vocabulary) are not tokens; HF generate suppresses them too
-        self.allowed = list(range(vocab)) if vocab < out_vocab else None
+        # padded embedding rows (Qwen2.5 pads its vocabulary) are not tokens; HF generate suppresses them too.
+        # A bias on the few padded ids, not allowed_token_ids over the whole vocabulary: vLLM caps that list
+        # at 1024 entries. -100 leaves them a probability of ~e^-100 relative to any real token.
+        self.bias = {token: -100.0 for token in range(vocab, out_vocab)} or None
         self.max_new_tokens = max_new_tokens
         self.temperature = temperature
         self.top_p = top_p
@@ -46,7 +48,7 @@ class VLLMRollouts:
             "temperature": 0.0}
         params = [
             SamplingParams(max_tokens=self.max_new_tokens, stop_token_ids=self.stops, seed=seed + index,
-                           allowed_token_ids=self.allowed, repetition_penalty=1.0, top_k=-1, **sampling)
+                           logit_bias=self.bias, repetition_penalty=1.0, top_k=-1, **sampling)
             for index in range(len(prompts))
         ]
         outputs = self.llm.generate([TokensPrompt(prompt_token_ids=p) for p in prompts], params, use_tqdm=False)
