@@ -79,6 +79,28 @@ def student_logits(model, prompt_ids: list[int], response_ids: list[int]) -> tor
     return model(input_ids=ids, logits_to_keep=len(response_ids) + 1, use_cache=False).logits[0, :-1]
 
 
+def student_logits_batch(model, rollouts: list[ScoredRollout]) -> list[torch.Tensor]:
+    """`student_logits` for several rollouts in one right-padded forward pass.
+
+    Padding sits after every real token, so causal attention never lets a real token see it. Only the
+    last `width - shortest prompt + 1` positions get logits, which covers every row's response.
+    """
+    device = next(model.parameters()).device
+    sequences = [list(r.prompt_ids) + list(r.response_ids) for r in rollouts]
+    width = max(len(seq) for seq in sequences)
+    ids = torch.zeros((len(sequences), width), dtype=torch.long)
+    mask = torch.zeros_like(ids)
+    for row, seq in enumerate(sequences):
+        ids[row, : len(seq)] = torch.tensor(seq)
+        mask[row, : len(seq)] = 1
+    keep = width - min(len(r.prompt_ids) for r in rollouts) + 1
+    logits = model(input_ids=ids.to(device), attention_mask=mask.to(device), logits_to_keep=keep,
+                   use_cache=False).logits
+    offset = width - keep
+    return [logits[row, len(r.prompt_ids) - 1 - offset: len(r.prompt_ids) + len(r.response_ids) - 1 - offset]
+            for row, r in enumerate(rollouts)]
+
+
 @torch.no_grad()
 def student_stats(model, rollout: ScoredRollout, vocab: int, divergence: str, jsd_beta: float,
                   temperature: float = 1.0) -> ScoredRollout:

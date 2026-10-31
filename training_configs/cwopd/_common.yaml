@@ -2,13 +2,14 @@
 # numbers, so schedule and data follow TSD-KD's released training script (github.com/kmswin1/TSD-KD)
 # and RIVAD Table 5 / Appendix B.2 where TSD-KD is silent.
 #
-# Hardware: one 60 GB GPU. The global batch stays 128 prompts per update (processed one rollout at a
-# time), but the student is kept in bf16 weights as TSD-KD's script does (bf16 load + bf16=True):
-# Qwen2.5-14B teacher ~30 GB + 1.5B student, grads and AdamW states ~12 GB. fp32 master weights
-# (student-dtype: float32, ~24 GB) do not fit next to the teacher.
+# Hardware: one H200 (140 GB). The global batch stays 128 prompts per update. The student is kept in
+# bf16 weights as TSD-KD's script does (bf16 load + bf16=True). Rough Qwen budget: vLLM rollout
+# engine 28 GB (0.2 of the GPU), 14B teacher ~30 GB, 1.5B student + grads + AdamW ~12 GB, one batch of
+# teacher logits on the GPU ~20 GB, student micro-batch activations. peak_memory_gb in metrics.jsonl
+# reports the real figure (it includes the engine, which shares the process).
 family: cwopd
 run:
-  gpus: [0]  # one GPU; RIVAD used 4 (B.2), the global batch of 128 prompts is unchanged
+  gpus: [0]  # one H200; RIVAD used 4 GPUs (B.2), the global batch of 128 prompts is unchanged
   log_dir: logs
 seed: 10  # RIVAD Table 5
 seed_suffix: ""  # set to e.g. -s11 together with seed=11 for extra seeds
@@ -61,7 +62,12 @@ stages:
       rollout-source: student
       max-new-tokens: 512
       rollout-temperature: 1.0
-      generation-batch-size: 32
+      rollout-engine: vllm  # colocated, synced to the student every step; hf = transformers generate
+      vllm-gpu-memory-utilization: 0.2
+      vllm-max-model-len: 2048  # prompt <= 512 + 512 new tokens
+      generation-batch-size: 32  # hf engine only
+      train-micro-batch: 4  # rollouts per student forward/backward
+      gradient-checkpointing: false
       kd-temperature: 1.0
       teacher-max-tokens: 2560
       attn-implementation: ${attn_implementation}
@@ -80,7 +86,7 @@ stages:
       selection-fraction: 0.1
       entropy-min-coef: 0.0
       entropy-min-fraction: 0.1
-      teacher-cache: cpu  # recompute if host RAM < ~48 GB (Gemma2: ~0.26 GB/rollout)
+      teacher-cache: gpu  # ~20 GB per batch (Qwen); cpu moves it to host RAM, recompute drops it
       dump-rollouts-every: 50
   eval:
     module: answergain.cwopd.lm_eval_suite

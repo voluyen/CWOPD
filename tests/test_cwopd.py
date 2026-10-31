@@ -17,6 +17,7 @@ from answergain.cwopd.objective import (
     token_divergence,
 )
 from answergain.cwopd.probes import coarsen_spans, encode_probe, fit_spans, probe_values, score_rollout
+from answergain.cwopd.scoring import ScoredRollout, student_logits, student_logits_batch
 from answergain.cwopd.stats import jaccard_top, partial, spearman
 from answergain.cwopd.steps import decode_with_offsets, rollout_step_spans
 
@@ -52,6 +53,21 @@ def test_packed_probes_match_one_pass_per_prefix(tokenizer, attn):
     assert len(spans) == 3 and packed[1].shape == (len(spans) + 1, len(answer_ids))
     torch.testing.assert_close(packed[0], separate[0], atol=1e-5, rtol=1e-5)  # rollout logits untouched
     torch.testing.assert_close(packed[1], separate[1], atol=1e-5, rtol=1e-5)
+
+
+def test_batched_student_pass_matches_one_pass_per_rollout(tokenizer):
+    model = tiny_model(tokenizer, "sdpa")
+    texts = [("Solve 2+3.", "So 5."), ("A much longer question about numbers here?", "First, think. Then 7."),
+             ("Hi", "Answer: \\boxed{1}.")]
+    rollouts = [ScoredRollout(prompt_ids=tokenizer(p, add_special_tokens=False)["input_ids"],
+                              response_ids=tokenizer(r, add_special_tokens=False)["input_ids"], answer=None)
+                for p, r in texts]
+    with torch.no_grad():
+        batched = student_logits_batch(model, rollouts)
+        for rollout, logits in zip(rollouts, batched):
+            single = student_logits(model, rollout.prompt_ids, rollout.response_ids)
+            assert logits.shape == single.shape == (len(rollout.response_ids), model.config.vocab_size)
+            torch.testing.assert_close(logits, single, atol=1e-5, rtol=1e-5)
 
 
 def test_rollout_spans_tile_sampled_ids_including_multibyte_and_eos(tokenizer):

@@ -4,12 +4,12 @@ Code for `proposal.pdf`, run under the experimental setup of RIVAD (ICLR 2027 su
 reuses the TSD-KD setup and numbers. Family `cwopd`, configs under `training_configs/cwopd/`,
 code in `src/answergain/cwopd/`.
 
-## Setup on the GPU server (one 60 GB GPU)
+## Setup on the GPU server (one H200, 140 GB)
 
 ```bash
 scripts/cwopd/setup.sh          # uv sync + .venv-eval with lm-evaluation-harness 0.4.13 (vLLM)
 huggingface-cli login           # Gemma2 checkpoints are gated
-scripts/cwopd/smoke.sh          # 2 training steps of CW-OPD on 16 prompts + a tiny eval, ~15 min
+scripts/cwopd/smoke.sh          # 2 full training steps (128 prompts each) + a tiny eval
 ```
 
 Local model copies: `QWEN25_14B`, `QWEN25_1P5B`, `GEMMA2_9B`, `GEMMA2_2B` env vars override the HF ids;
@@ -48,16 +48,19 @@ Outputs: `data/cwopd/<pair>/`, `checkpoints/cwopd/<run>/` (`metrics.jsonl` per s
 
 ## Deviations and open choices (check before reporting)
 
-- **One GPU instead of 4 (RIVAD) / 8 (TSD-KD).** The global batch of 128 is kept, rollouts are processed
-  one at a time. The student trains in bf16 weights, as TSD-KD's script does. fp32 master weights do not
-  fit next to the 14B teacher in 60 GB.
-- **Wall-clock.** One update means 128 HF-generate rollouts, 128 teacher passes and 128 student passes. Read
-  `generate_s + score_s + train_s` from the smoke run and multiply by ~617 steps/epoch x 3 epochs. Expect
-  days per arm, so prioritise: pilot, then `cw-opd`. Run the
-  ablations with `stages.train.args.epochs=1` if budget forces it, and say so in the paper.
-- **Host RAM.** `teacher-cache: cpu` keeps a batch of teacher logits in RAM, about 20 GB (Qwen) or 34 GB
-  (Gemma) per update. With less RAM, pass `stages.train.args.teacher-cache=recompute`, which costs one extra
-  teacher pass per rollout.
+- **One H200 instead of 4 GPUs (RIVAD) / 8 (TSD-KD).** The global batch of 128 is kept. The student trains in
+  bf16 weights, as TSD-KD's script does.
+- **Rollouts with vLLM.** `rollout-engine: vllm` runs a vLLM engine inside the trainer (0.2 of the GPU) and
+  copies the student's weights into it before every step, so rollouts stay on-policy. `rollout-engine=hf`
+  falls back to transformers generate, which is several times slower. Phase B runs `train-micro-batch`
+  rollouts per forward/backward (4 for Qwen, 2 for Gemma); the gradient is the same sum as one at a time.
+- **Wall-clock.** Read `generate_s + score_s + train_s` from the smoke run and multiply by ~617 steps/epoch
+  x 3 epochs. If budget forces it, run the ablations with `stages.train.args.epochs=1`: they compare CW-OPD
+  variants with each other, not with the published rows. Say so in the paper.
+- **Memory.** Qwen keeps a batch of teacher logits (~20 GB) on the GPU (`teacher-cache: gpu`). Gemma's 256K
+  vocabulary makes that ~34 GB, so it uses host RAM (`cpu`). If `peak_memory_gb` gets close to 140 or
+  training hits OOM, lower `stages.train.args.train-micro-batch`, set `teacher-cache=cpu` (or `recompute`, one
+  extra teacher pass per rollout), or turn on `gradient-checkpointing=true`.
 - **Eval protocol.** The metric key per benchmark (e.g. GSM8K flexible vs strict extract) and chat template
   (off by default) are not stated by TSD-KD. Fix them with `phase0_calibrate.sh` so the base rows match
   57.1 / 38.8 / 16.9 / ... before comparing.

@@ -6,8 +6,11 @@ One optimizer step (proposal Algorithm 1), on every rank:
      baselines); one teacher pass per rollout gives the logits on y and, with consequence
      weighting, the probe values V_0..V_K packed into the same pass; g_k = |V_k - V_{k-1}|;
      g-bar is updated with the global batch; w_k = 1 + g_k / g-bar (stop-gradient).
-  B. student forward/backward per rollout on sum_t w_t D_t / sum_t w_t, both sums over the
-     global batch, so the supervision budget is fixed per batch (Eq. 5).
+  B. student forward/backward in micro-batches of rollouts on sum_t w_t D_t / sum_t w_t, both sums
+     over the global batch, so the supervision budget is fixed per batch (Eq. 5).
+
+Rollouts come from HF generate or, on GPU, from a vLLM engine in the same process that receives the
+student's weights before every step (answergain.cwopd.vllm_rollouts).
 
 Defaults follow TSD-KD's released setup (RIVAD Table 2 reuses its numbers) and RIVAD Table 5:
 batch 128 prompts, lr 5e-6 cosine, warmup 0.1, 3 epochs, KD temperature 1, 512 prompt + 512 new
@@ -49,7 +52,7 @@ from answergain.cwopd.objective import (
 from answergain.cwopd.probes import PROBE_MODES, VALUE_FORMS, response_logits_only
 from answergain.cwopd.scoring import (
     ScoredRollout,
-    student_logits,
+    student_logits_batch,
     student_probe_logps,
     student_stats,
     teacher_pass,
@@ -85,7 +88,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-new-tokens", type=int, default=512)
     parser.add_argument("--rollout-temperature", type=float, default=1.0)
     parser.add_argument("--rollout-top-p", type=float, default=1.0)
-    parser.add_argument("--generation-batch-size", type=int, default=32)
+    parser.add_argument("--generation-batch-size", type=int, default=32, help="HF generate only")
+    parser.add_argument("--rollout-engine", choices=("hf", "vllm"), default="hf",
+                        help="vllm: colocated engine synced to the student every step (one rank only)")
+    parser.add_argument("--vllm-gpu-memory-utilization", type=float, default=0.2,
+                        help="share of the GPU the engine reserves (weights + KV cache)")
+    parser.add_argument("--vllm-max-model-len", type=int, default=2048)
+    parser.add_argument("--train-micro-batch", type=int, default=1,
+                        help="rollouts per student forward/backward in phase B (gradient sum is unchanged)")
     # objective
     parser.add_argument("--objective", choices=OBJECTIVES, default="rkl")
     parser.add_argument("--jsd-beta", type=float, default=0.9, help="GKD's beta (TSD-KD and RIVAD: 0.9)")
@@ -146,15 +156,20 @@ def setup_distributed() -> tuple[int, int, torch.device]:
     return rank, world, device
 
 
+def multi_rank() -> bool:
+    # an in-process vLLM engine initializes a one-rank process group of its own; nothing to reduce there
+    return dist.is_initialized() and dist.get_world_size() > 1
+
+
 def all_sum(values: list[float], device: torch.device) -> list[float]:
     tensor = torch.tensor(values, dtype=torch.float64, device=device)
-    if dist.is_initialized():
+    if multi_rank():
         dist.all_reduce(tensor)
     return tensor.tolist()
 
 
 def barrier() -> None:
-    if dist.is_initialized():
+    if multi_rank():
         dist.barrier()
 
 
@@ -252,7 +267,10 @@ def train_step(step, batch, model, teacher, tokenizer, optimizer, scheduler, run
     # ---- phase A: rollouts, teacher pass with packed probes, step signals
     clock = time.perf_counter()
     prompts = [record["prompt_ids"] for record in batch]
-    if args.rollout_source == "student":
+    if args.rollout_source == "student" and ctx["engine"] is not None:
+        ctx["engine"].load(module)
+        generations = ctx["engine"].generate(prompts, seed=args.seed * 100_003 + step * 1_009)
+    elif args.rollout_source == "student":
         generations = generate_rollouts(model, tokenizer, prompts, args, ctx["stops"], vocab, device, autocast)
     else:
         generations = teacher_rollouts(tokenizer, batch, args, ctx["end_id"])
@@ -337,34 +355,41 @@ def train_step(step, batch, model, teacher, tokenizer, optimizer, scheduler, run
     clock = time.perf_counter()
     optimizer.zero_grad(set_to_none=True)
     sums = {"div": 0.0, "loss": 0.0, "em": 0.0}
-    for index, rollout in enumerate(rollouts):
+    # micro-batches of similar length waste little padding; the order does not change the gradient sum
+    order = sorted(range(len(rollouts)), key=lambda i: len(rollouts[i].prompt_ids) + len(rollouts[i].response_ids))
+    chunks = [order[i: i + args.train_micro_batch] for i in range(0, len(order), args.train_micro_batch)]
+    for chunk_index, chunk in enumerate(chunks):
         # gradients are all-reduced only on the last backward of the step
-        sync = contextlib.nullcontext() if world == 1 or index == len(rollouts) - 1 else model.no_sync()
-        with sync:
+        last = world == 1 or chunk_index == len(chunks) - 1
+        with contextlib.nullcontext() if last else model.no_sync():
             with autocast():
-                logits = student_logits(model, rollout.prompt_ids, rollout.response_ids)[:, :vocab].float()
-            logits = logits / args.kd_temperature
-            weights = token_w[index].to(device)
-            if args.objective == "ce":
-                targets = torch.tensor(rollout.response_ids, device=device)
-                per_token = F.cross_entropy(logits, targets, reduction="none")
-            else:
-                cached = rollout.teacher_logits
-                if cached is None:  # --teacher-cache recompute
-                    cached = response_logits_only(teacher, rollout.prompt_ids, rollout.response_ids)[:, :vocab]
-                teacher_logits = cached.to(device).float() / args.kd_temperature
-                per_token = token_divergence(logits, teacher_logits, args.objective, args.jsd_beta)
-            # DDP averages gradients over ranks; scale so the result is the global sum / global weight.
-            loss = (weights * per_token).sum() / max(weight_total, 1e-12) * world
-            if args.entropy_min_coef > 0:
-                entropy = token_entropy(logits)
-                keep = select_top_fraction([entropy.detach()], args.entropy_min_fraction)[0]
-                em = (keep * entropy).sum() / keep.sum().clamp_min(1.0)
-                loss = loss + args.entropy_min_coef * em / max(n_global, 1.0) * world
-                sums["em"] += float(em)
+                chunk_logits = student_logits_batch(model, [rollouts[i] for i in chunk])
+            loss = 0.0
+            for index, logits in zip(chunk, chunk_logits):
+                rollout = rollouts[index]
+                logits = logits[:, :vocab].float() / args.kd_temperature
+                weights = token_w[index].to(device)
+                if args.objective == "ce":
+                    targets = torch.tensor(rollout.response_ids, device=device)
+                    per_token = F.cross_entropy(logits, targets, reduction="none")
+                else:
+                    cached = rollout.teacher_logits
+                    if cached is None:  # --teacher-cache recompute
+                        cached = response_logits_only(teacher, rollout.prompt_ids, rollout.response_ids)[:, :vocab]
+                    teacher_logits = cached.to(device).float() / args.kd_temperature
+                    per_token = token_divergence(logits, teacher_logits, args.objective, args.jsd_beta)
+                # DDP averages gradients over ranks; scale so the result is the global sum / global weight.
+                row_loss = (weights * per_token).sum() / max(weight_total, 1e-12) * world
+                if args.entropy_min_coef > 0:
+                    entropy = token_entropy(logits)
+                    keep = select_top_fraction([entropy.detach()], args.entropy_min_fraction)[0]
+                    em = (keep * entropy).sum() / keep.sum().clamp_min(1.0)
+                    row_loss = row_loss + args.entropy_min_coef * em / max(n_global, 1.0) * world
+                    sums["em"] += float(em)
+                loss = loss + row_loss
+                sums["div"] += float(per_token.detach().sum())
+                sums["loss"] += float(row_loss.detach()) / world
             loss.backward()
-        sums["div"] += float(per_token.detach().sum())
-        sums["loss"] += float(loss.detach()) / world
     if not rollouts:  # keep DDP's collective calls matched on a rank with nothing to train on
         (sum(p.sum() for p in model.parameters() if p.requires_grad) * 0.0).backward()
     grad_norm = torch.nn.utils.clip_grad_norm_([p for p in model.parameters() if p.requires_grad],
@@ -493,6 +518,23 @@ def main(argv: list[str] | None = None) -> None:
 
     tokenizer = AutoTokenizer.from_pretrained(args.student)
     records = read_jsonl(args.data_path)[: args.limit]
+    use_vllm = args.rollout_engine == "vllm" and args.rollout_source == "student"
+    if use_vllm and (world > 1 or device.type != "cuda" or args.use_lora):
+        raise SystemExit("--rollout-engine vllm needs one CUDA rank and full fine-tuning (no LoRA)")
+    engine = None
+    if use_vllm:
+        from transformers import AutoConfig, GenerationConfig
+
+        from answergain.cwopd.vllm_rollouts import VLLMRollouts
+
+        # built before the student and teacher take the GPU, so vLLM's memory profiling sees a clean device
+        engine = VLLMRollouts(
+            args.student, stops=stop_ids(tokenizer, GenerationConfig.from_pretrained(args.student)),
+            vocab=len(tokenizer), out_vocab=AutoConfig.from_pretrained(args.student).vocab_size,
+            max_new_tokens=args.max_new_tokens, temperature=args.rollout_temperature, top_p=args.rollout_top_p,
+            gpu_memory_utilization=args.vllm_gpu_memory_utilization, max_model_len=args.vllm_max_model_len,
+            seed=args.seed,
+        )
     dtype = torch.float32 if args.student_dtype == "float32" or device.type == "cpu" else torch.bfloat16
     student = AutoModelForCausalLM.from_pretrained(
         args.student, dtype=dtype, attn_implementation=args.attn_implementation
@@ -562,7 +604,7 @@ def main(argv: list[str] | None = None) -> None:
 
     stops = stop_ids(tokenizer, unwrap(model).generation_config)
     ctx = {"device": device, "world": world, "rank": rank, "vocab": vocab, "autocast": autocast,
-           "stops": stops, "end_id": turn_end_id(tokenizer, stops)}
+           "stops": stops, "engine": engine, "end_id": turn_end_id(tokenizer, stops)}
     out = Path(args.output_dir)
     if rank == 0:
         out.mkdir(parents=True, exist_ok=True)
@@ -606,7 +648,7 @@ def main(argv: list[str] | None = None) -> None:
             "train_runtime_s": time.perf_counter() - started,
         }, indent=2))
     barrier()
-    if dist.is_initialized():
+    if world > 1 and dist.is_initialized():
         dist.destroy_process_group()
 
 

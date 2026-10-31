@@ -11,3 +11,11 @@ learning_rate: 1.0e-7  # TSD-KD Table 10 (Gemma2)
 attn_implementation: eager  # Gemma2's attention softcapping needs the eager path
 eval_benchmarks: gsm8k,gsm_plus,math,mbpp,mmlu_stem,ifeval
 table_benchmarks: gsm8k,gsm_plus,math,mbpp,mmlu_stem  # the columns RIVAD Table 6 reports
+stages:
+  train:
+    args:
+      # 256K vocabulary: one batch of teacher logits is ~34 GB, too much next to everything else on the
+      # GPU, so it goes to host RAM; smaller micro-batches and checkpointing keep the student's logits small
+      teacher-cache: cpu
+      train-micro-batch: 2
+      gradient-checkpointing: true
