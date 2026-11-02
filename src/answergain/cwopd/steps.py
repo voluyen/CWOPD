@@ -33,10 +33,18 @@ def _byte_decoder() -> dict[str, int]:
 
 def is_byte_level(tokenizer) -> bool:
     """Byte-level BPE (Qwen, Llama-3) vs SentencePiece-style pieces with byte fallback (Gemma)."""
+    # Serializing the tokenizer costs ~0.2 s (a 150K-token vocabulary) and this runs once per rollout,
+    # so the answer is kept on the tokenizer.
+    cached = getattr(tokenizer, "_cwopd_byte_level", None)
+    if cached is not None:
+        return cached
     backend = getattr(tokenizer, "backend_tokenizer", None)
-    if backend is None:
-        return False
-    return "ByteLevel" in json.dumps(json.loads(backend.to_str()).get("decoder"))
+    byte_level = backend is not None and "ByteLevel" in json.dumps(json.loads(backend.to_str()).get("decoder"))
+    try:
+        tokenizer._cwopd_byte_level = byte_level
+    except AttributeError:
+        pass
+    return byte_level
 
 
 def token_bytes(tokenizer, token_ids: list[int]) -> list[bytes]:

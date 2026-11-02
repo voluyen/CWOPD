@@ -15,6 +15,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 # benchmark -> (lm-eval task, shots, primary metric key, fallback keys)
@@ -22,7 +23,8 @@ SUITE = {
     "gsm8k": ("gsm8k", 5, "exact_match,flexible-extract", ["exact_match,strict-match"]),
     "gsm_plus": ("gsm_plus", 5, "exact_match,flexible-extract", ["exact_match,strict-match"]),
     "math": ("minerva_math", 4, "exact_match,none", ["math_verify,none"]),
-    "mbpp": ("mbpp", 0, "pass_at_1,none", []),
+    # lm-eval's mbpp / mbpp_instruct filters score ~0 on Qwen2.5-Instruct (see lm_eval_tasks/utils.py)
+    "mbpp": ("mbpp_cwopd", 0, "pass_at_1,extract_code", ["pass_at_1,none"]),
     "sciq": ("sciq", 0, "acc,none", ["acc_norm,none"]),
     "mmlu_stem": ("mmlu_stem", 5, "acc,none", []),
     "mmlu_pro_math": ("mmlu_pro_math", 5, "exact_match,custom-extract", []),
@@ -32,6 +34,7 @@ SUITE = {
 }
 RIVAD_BENCHMARKS = ["gsm8k", "gsm_plus", "math", "mbpp", "sciq", "mmlu_stem", "mmlu_pro_math", "bbh_cot"]
 CODE_TASKS = {"mbpp"}
+TASKS_DIR = Path(__file__).parent / "lm_eval_tasks"
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -71,7 +74,7 @@ def commands(args) -> list[tuple[list[str], list[str]]]:
         cmd = [
             args.lm_eval_python, "-m", "lm_eval", "run", "--model", "vllm", "--model_args", model_args,
             "--tasks", ",".join(SUITE[name][0] for name in group), "--num_fewshot", str(shots),
-            "--batch_size", str(args.batch_size), "--seed", str(args.seed),
+            "--include_path", str(TASKS_DIR), "--batch_size", str(args.batch_size), "--seed", str(args.seed),
             "--output_path", str(Path(args.results_dir) / args.tag / "lm_eval" / f"{shots}shot"),
         ]
         if args.apply_chat_template:
@@ -115,14 +118,26 @@ def main(argv: list[str] | None = None) -> None:
     rows = []
     for cmd, group in plan:
         print("$ " + " ".join(cmd), flush=True)
-        subprocess.run(cmd, check=True, env=env)
-        metrics = read_metrics(Path(cmd[cmd.index("--output_path") + 1]))
+        started = time.time()
+        output_dir = Path(cmd[cmd.index("--output_path") + 1])
+        returncode = subprocess.run(cmd, env=env).returncode
+        # vLLM can abort while tearing down ("terminate called without an active exception") after
+        # lm-eval has saved its results; only trust that exit if a fresh results file exists.
+        fresh = any(f.stat().st_mtime >= started for f in output_dir.rglob("results_*.json"))
+        if returncode and not fresh:
+            raise subprocess.CalledProcessError(returncode, cmd)
+        if returncode:
+            print(f"warning: lm-eval exited {returncode} after saving results; continuing", flush=True)
+        metrics = read_metrics(output_dir)
         for name in group:
             value, key = primary(name, metrics)
             rows.append({"benchmark": name, "accuracy": value, "metric": key, "model": args.tag,
                          "all_metrics": metrics.get(SUITE[name][0], {})})
             print(f"[{name}] {key} = {value}")
     path = Path(args.results_dir) / args.tag / "summary.json"
+    if path.exists():  # a partial re-run (e.g. --benchmarks mbpp) updates its rows and keeps the others
+        done = {row["benchmark"] for row in rows}
+        rows = [row for row in json.loads(path.read_text()) if row["benchmark"] not in done] + rows
     path.write_text(json.dumps(rows, indent=2))
     print(f"-> {path}")
 

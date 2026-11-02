@@ -45,7 +45,7 @@ stages:
       seed: ${seed}
   train:
     module: answergain.cwopd.train
-    launcher: torchrun
+    launcher: python
     creates: ${checkpoint}/run-summary.json
     args:
       student: ${pair.student}
